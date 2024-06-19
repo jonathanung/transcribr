@@ -3,7 +3,7 @@ const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const { OpenAI } = require('openai');
-const recordingData = require('../../recording-data'); // Adjusted path
+const recordingData = require('../../recording-data');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -23,29 +23,22 @@ module.exports = {
 
       await interaction.deferReply(); // Defer the reply to give more time for processing
 
-      const { connection, audioStream, audio } = recordingInfo;
+      const { connection, audioStream, writeStream, audioFilePath } = recordingInfo;
 
       audioStream.destroy();
+      writeStream.end();
 
-      const buffer = Buffer.concat(audio);
-      console.log(`Total audio buffer length on stop: ${buffer.length}`);
-      if (buffer.length < 16000) { // Minimum length for 0.1 second of 16kHz audio
-        await interaction.followUp('Audio file is too short for transcription.');
-        return;
-      }
+      console.log(`Recording saved to ${audioFilePath}`);
 
-      const inputPath = path.join(__dirname, 'recording.pcm');
       const outputWavPath = path.join(__dirname, 'recording.wav');
       const outputMp3Path = path.join(__dirname, 'recording.mp3');
 
-      fs.writeFileSync(inputPath, buffer);
-
       console.log('Starting audio processing with ffmpeg');
-      ffmpeg(inputPath)
-        .inputFormat('s32le')
-        .audioChannels(2)
+      ffmpeg(audioFilePath)
+        .inputFormat('s16le')
+        .audioChannels(2) // Ensure mono channel
         .audioFrequency(48000)
-        .audioFilters('volume=2') // Apply normalization
+        .audioFilters('volume=1') // Apply normalization
         .save(outputWavPath)
         .on('end', async () => {
           console.log('Audio file converted to WAV');
@@ -93,7 +86,7 @@ module.exports = {
           }
 
           // Clean up the PCM file after transcription
-          fs.unlinkSync(inputPath);
+          fs.unlinkSync(audioFilePath);
         })
         .on('error', async (err) => {
           console.error('Error processing audio file:', err);
