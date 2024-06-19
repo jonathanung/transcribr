@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 require('dotenv').config();
 
+const GUILDS_JSON = require('./guilds.json');
+const GUILD_IDS = GUILDS_JSON["GUILD_IDS"];
+
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
 
 const commands = [];
 const foldersPath = path.join(__dirname, 'commands');
@@ -28,15 +30,16 @@ for (const folder of commandFolders) {
 const rest = new REST().setToken(TOKEN);
 
 (async () => {
-	try {
-		console.log(`Started refreshing ${commands.length} application (/) commands.`);
-		const data = await rest.put(
-			Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-			{ body: commands },
-		);
-
-		console.log(`Successfully reloaded ${data.length} application (/) commands.`);
-	} catch (error) {
-        	console.error(error);
+	for (const GUILD_ID of GUILD_IDS) {
+		try {
+			console.log(`Started refreshing ${commands.length} application (/) commands for guild ${GUILD_ID}.`);
+			const data = await rest.put(
+				Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+				{ body: commands },
+			);
+			console.log(`Successfully reloaded ${data.length} application (/) commands for guild ${GUILD_ID}.`);
+		} catch (error) {
+			console.error(error);
+		}
 	}
 })();

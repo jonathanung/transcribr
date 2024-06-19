@@ -36,7 +36,7 @@ module.exports = {
       console.log('Starting audio processing with ffmpeg');
       ffmpeg(audioFilePath)
         .inputFormat('s16le')
-        .audioChannels(2) // Ensure mono channel
+        .audioChannels(1) // Ensure mono channel
         .audioFrequency(48000)
         .audioFilters('volume=1') // Apply normalization
         .save(outputWavPath)

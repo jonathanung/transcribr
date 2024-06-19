@@ -54,7 +54,7 @@ async function startRecording(interaction, connection) {
       },
     });
 
-    const decoder = new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 });
+    const decoder = new prism.opus.Decoder({ frameSize: 480, channels: 1, rate: 48000 });
 
     audioStream.pipe(decoder).pipe(writeStream);
 
