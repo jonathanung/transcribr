@@ -4,6 +4,7 @@ const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const recordingData = require('../../recording-data');
+const ffmpeg = require('fluent-ffmpeg');
 const { setTimeout, clearTimeout } = require('timers');
 
 module.exports = {

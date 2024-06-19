@@ -79,5 +79,48 @@ client.once(Events.ClientReady, client => {
 	console.log(`${client.user.tag} is now running!`);
 });
 
+async function deleteFiles(directory) {
+    return new Promise((resolve, reject) => {
+        fs.readdir(directory, (err, files) => {
+            if (err) {
+                return reject(`Error reading directory: ${err}`);
+            }
+            const deletePromises = files
+                .filter(file => file.endsWith('.pcm') || file.endsWith('.mp3'))
+                .map(file => {
+                    return new Promise((resolve, reject) => {
+                        fs.unlink(path.join(directory, file), err => {
+                            if (err) {
+                                console.error(`Error deleting file: ${file}, ${err}`);
+                                return reject(err);
+                            } else {
+                                console.log(`Deleted file: ${file}`);
+                                resolve();
+                            }
+                        });
+                    });
+                });
+            Promise.all(deletePromises)
+                .then(resolve)
+                .catch(reject);
+        });
+    });
+}
+
+process.on('SIGINT', async () => {
+    console.log('^C. Shutting down gracefully...');
+    
+    const recordingDir = path.join(__dirname, 'commands', 'recording');
+
+    try {
+        await deleteFiles(recordingDir);
+        console.log('All files deleted successfully');
+    } catch (error) {
+        console.error('Error during file deletion:', error);
+    }
+
+    client.destroy();
+    process.exit(0);
+});
 
 client.login(TOKEN);
