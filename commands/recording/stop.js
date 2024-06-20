@@ -15,13 +15,14 @@ module.exports = {
     .setDescription('Stops the recording.'),
   async execute(interaction) {
     try {
-      const recordingInfo = recordingData.get(interaction.user.id);
+      const userId = interaction.user.id;
+      const recordingInfo = recordingData.get(userId);
 
       if (!recordingInfo) {
         return interaction.reply('No active recording found for you.');
       }
 
-      await interaction.deferReply(); // Defer the reply to give more time for processing
+      await interaction.deferReply();
 
       const { connection, audioStream, writeStream, audioFilePath } = recordingInfo;
 
@@ -30,29 +31,27 @@ module.exports = {
 
       console.log(`Recording saved to ${audioFilePath}`);
 
-      const outputWavPath = path.join(__dirname, 'recording.wav');
-      const outputMp3Path = path.join(__dirname, 'recording.mp3');
+      const outputWavPath = path.join(__dirname, `recording_${userId}_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`);
+      const outputMp3Path = path.join(__dirname, `recording_${userId}_${new Date().toISOString().replace(/[:.]/g, '-')}.mp3`);
 
       console.log('Starting audio processing with ffmpeg');
       ffmpeg(audioFilePath)
         .inputFormat('s16le')
-        .audioChannels(1) // Ensure mono channel
+        .audioChannels(1)
         .audioFrequency(48000)
-        .audioFilters('volume=1') // Apply normalization
+        .audioFilters('volume=1')
         .save(outputWavPath)
         .on('end', async () => {
-          console.log('Audio file converted to WAV');
+          console.log('Audio file converted to WAV:', outputWavPath);
           const audioFile = fs.createReadStream(outputWavPath);
 
-          // Convert WAV to MP3 for easy listening
           ffmpeg(outputWavPath)
             .audioCodec('libmp3lame')
             .save(outputMp3Path)
             .on('end', async () => {
-              console.log('Audio file converted to MP3');
-              await interaction.followUp(`The audio file is saved as recording.mp3. You can listen to it to check the recorded audio.`);
+              console.log('Audio file converted to MP3:', outputMp3Path);
+              await interaction.followUp(`The audio file is saved. You can listen to it to check the recorded audio.`);
 
-              // Clean up the WAV file after MP3 conversion
               fs.unlinkSync(outputWavPath);
             })
             .on('error', (err) => {
@@ -64,18 +63,18 @@ module.exports = {
             console.log('Starting transcription with OpenAI');
             const response = await openai.audio.transcriptions.create({
               file: audioFile,
-              model: 'whisper-1', // OpenAI's Whisper model for transcription
+              model: 'whisper-1',
               prompt: '',
               response_format: 'text',
               language: 'en',
             });
 
-            console.log('Transcription response:', response); // Log the entire response
+            console.log('Transcription response:', response);
 
-            if (response) {
-              const transcription = response.trim();
-              await interaction.followUp(`Transcription: ${transcription}`);
-              console.log('Transcription completed');
+            if (response && response.text) {
+              const transcription = response.text.trim();
+              await interaction.followUp(`Transcription completed.`);
+              console.log('Transcription:', transcription);
             } else {
               console.error('Unexpected response structure:', response);
               await interaction.followUp('Unexpected response structure received.');
@@ -85,7 +84,6 @@ module.exports = {
             await interaction.followUp('Error during transcription.');
           }
 
-          // Clean up the PCM file after transcription
           fs.unlinkSync(audioFilePath);
         })
         .on('error', async (err) => {
@@ -94,7 +92,7 @@ module.exports = {
         });
 
       connection.disconnect();
-      recordingData.delete(interaction.user.id);
+      recordingData.delete(userId);
     } catch (error) {
       console.error('Error executing stop command:', error);
       await interaction.followUp('There was an error while executing this command!');

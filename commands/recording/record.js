@@ -4,7 +4,6 @@ const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const recordingData = require('../../recording-data');
-const ffmpeg = require('fluent-ffmpeg');
 const { setTimeout, clearTimeout } = require('timers');
 
 module.exports = {
@@ -24,13 +23,13 @@ module.exports = {
       selfDeaf: false,
     });
 
-    await interaction.deferReply(); // Defer the interaction response
+    await interaction.deferReply();
 
     connection.on('stateChange', async (oldState, newState) => {
       console.log(`Voice connection state changed from ${oldState.status} to ${newState.status}`);
       if (newState.status === 'ready') {
-        startRecording(interaction, connection);
         await interaction.followUp(`Recording started in ${channel.name}.`);
+        startRecording(interaction, connection, channel);
       }
     });
 
@@ -38,43 +37,56 @@ module.exports = {
       console.error('Voice connection error:', error);
       await interaction.followUp('Failed to connect to the voice channel.');
     });
+
+    interaction.client.on('voiceStateUpdate', (oldState, newState) => {
+      if (newState.channelId === channel.id && !newState.member.user.bot) {
+        if (!recordingData.has(newState.id)) {
+          startRecordingForUser(newState.id, connection, interaction);
+        }
+      }
+    });
   },
 };
 
-async function startRecording(interaction, connection) {
-  const userId = interaction.user.id;
+async function startRecording(interaction, connection, channel) {
+  const members = channel.members.filter(member => !member.user.bot);
 
-  const startNewRecording = async () => {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const audioFilePath = path.join(__dirname, `recording_${userId}_${timestamp}.pcm`);
-    const writeStream = fs.createWriteStream(audioFilePath);
+  members.forEach(member => {
+    startRecordingForUser(member.id, connection, interaction);
+  });
+}
 
-    const audioStream = connection.receiver.subscribe(userId, {
-      end: {
-        behavior: EndBehaviorType.Manual,
-      },
-    });
+async function startRecordingForUser(userId, connection, interaction) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const audioFilePath = path.join(__dirname, `recording_${userId}_${timestamp}.pcm`);
+  const writeStream = fs.createWriteStream(audioFilePath);
 
-    const decoder = new prism.opus.Decoder({ frameSize: 480, channels: 1, rate: 48000 });
+  const audioStream = connection.receiver.subscribe(userId, {
+    end: {
+      behavior: EndBehaviorType.Manual,
+    },
+  });
 
-    audioStream.pipe(decoder).pipe(writeStream);
+  const decoder = new prism.opus.Decoder({ frameSize: 960, channels: 1, rate: 48000 });
 
-    audioStream.on('data', (chunk) => {
-      console.log(`Received audio chunk of size ${chunk.length}`);
-    });
+  audioStream.pipe(decoder).pipe(writeStream);
 
-    audioStream.on('error', error => {
-      console.error('Audio stream error:', error);
-    });
+  audioStream.on('data', (chunk) => {
+    console.log(`Received audio chunk of size ${chunk.length} from user ${userId}`);
+  });
 
-    recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction });
+  audioStream.on('error', error => {
+    console.error('Audio stream error:', error);
+  });
 
-    // Schedule the next recording
-    const timer = setTimeout(() => stopRecording(userId, true), 30000);
-    recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction, timer });
-  };
+  writeStream.on('finish', () => {
+    console.log(`Finished writing audio for user ${userId}`);
+  });
 
-  await startNewRecording();
+  recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction });
+
+  const timer = setTimeout(() => stopRecording(userId, true), 30000);
+  recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction, timer });
 }
 
 async function stopRecording(userId, startNew) {
@@ -89,59 +101,10 @@ async function stopRecording(userId, startNew) {
 
     console.log(`Recording saved to ${audioFilePath}`);
 
-    const outputWavPath = path.join(__dirname, `recording_${userId}_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`);
-    
-    console.log('Starting audio processing with ffmpeg');
-    ffmpeg(audioFilePath)
-      .inputFormat('s16le')
-      .audioChannels(2)
-      .audioFrequency(48000)
-      .audioFilters('volume=1')
-      .save(outputWavPath)
-      .on('end', async () => {
-        console.log('Audio file converted to WAV');
-        const audioFile = fs.createReadStream(outputWavPath);
-
-        // Transcription logic here
-        try {
-          console.log('Starting transcription with OpenAI');
-          const response = await openai.audio.transcriptions.create({
-            file: audioFile,
-            model: 'whisper-1',
-            prompt: '',
-            response_format: 'text',
-            language: 'en',
-          });
-
-          console.log('Transcription response:', response);
-
-          if (response) {
-            const transcription = response.trim();
-            await interaction.followUp(`Transcription: ${transcription}`);
-            console.log('Transcription completed');
-          } else {
-            console.error('Unexpected response structure:', response);
-            await interaction.followUp('Unexpected response structure received.');
-          }
-        } catch (error) {
-          console.error('Error during transcription:', error);
-          await interaction.followUp('Error during transcription.');
-        }
-
-        // Clean up the PCM and WAV files after transcription
-        fs.unlinkSync(audioFilePath);
-        fs.unlinkSync(outputWavPath);
-      })
-      .on('error', async (err) => {
-        console.error('Error processing audio file:', err);
-        await interaction.followUp('Error processing audio file.');
-      });
-
     recordingData.delete(userId);
 
     if (startNew) {
-      // Start a new recording
-      startRecording(interaction, recordingInfo.connection);
+      startRecordingForUser(userId, recordingInfo.connection, interaction);
     }
   } else {
     console.log('No active recording found for user:', userId);
