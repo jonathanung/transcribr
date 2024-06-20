@@ -4,7 +4,6 @@ const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const recordingData = require('../../recording-data');
-const { setTimeout, clearTimeout } = require('timers');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -84,28 +83,20 @@ async function startRecordingForUser(userId, connection, interaction) {
   });
 
   recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction });
-
-  const timer = setTimeout(() => stopRecording(userId, true), 30000);
-  recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction, timer });
 }
 
-async function stopRecording(userId, startNew) {
+async function stopRecording(userId) {
   const recordingInfo = recordingData.get(userId);
 
   if (recordingInfo) {
-    const { audioStream, writeStream, audioFilePath, timer, interaction } = recordingInfo;
+    const { audioStream, writeStream, audioFilePath, interaction } = recordingInfo;
 
-    clearTimeout(timer);
     audioStream.destroy();
     writeStream.end();
 
     console.log(`Recording saved to ${audioFilePath}`);
 
     recordingData.delete(userId);
-
-    if (startNew) {
-      startRecordingForUser(userId, recordingInfo.connection, interaction);
-    }
   } else {
     console.log('No active recording found for user:', userId);
   }
