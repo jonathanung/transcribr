@@ -14,6 +14,7 @@ module.exports = {
       return interaction.reply('You need to join a voice channel first!');
     }
 
+    const guildId = interaction.guild.id;
     const channel = interaction.member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -25,10 +26,10 @@ module.exports = {
     await interaction.deferReply();
 
     connection.on('stateChange', async (oldState, newState) => {
-      console.log(`Voice connection state changed from ${oldState.status} to ${newState.status}`);
+      // console.log(`Voice connection state changed from ${oldState.status} to ${newState.status}`);
       if (newState.status === 'ready') {
         await interaction.followUp(`Recording started in ${channel.name}.`);
-        startRecording(interaction, connection, channel);
+        startRecording(interaction, connection, channel, guildId);
       }
     });
 
@@ -39,65 +40,98 @@ module.exports = {
 
     interaction.client.on('voiceStateUpdate', (oldState, newState) => {
       if (newState.channelId === channel.id && !newState.member.user.bot) {
-        if (!recordingData.has(newState.id)) {
-          startRecordingForUser(newState.id, connection, interaction);
+        if (!recordingData[guildId]) {
+          recordingData[guildId] = new Map();
+        }
+        if (!recordingData[guildId].has(newState.id)) {
+          startRecordingForUser(newState.id, connection, interaction, guildId);
         }
       }
     });
   },
 };
 
-async function startRecording(interaction, connection, channel) {
+async function startRecording(interaction, connection, channel, guildId) {
   const members = channel.members.filter(member => !member.user.bot);
 
   members.forEach(member => {
-    startRecordingForUser(member.id, connection, interaction);
+    startRecordingForUser(member.id, connection, interaction, guildId);
   });
 }
 
-async function startRecordingForUser(userId, connection, interaction) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const audioFilePath = path.join(__dirname, `recording_${userId}_${timestamp}.pcm`);
-  const writeStream = fs.createWriteStream(audioFilePath);
+async function startRecordingForUser(userId, connection, interaction, guildId) {
+  const startNewRecording = () => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let time = null;
+    const guildFolderPath = path.join(__dirname, guildId);
+    if (!fs.existsSync(guildFolderPath)) {
+      fs.mkdirSync(guildFolderPath);
+    }
+    const audioFilePath = path.join(guildFolderPath, `recording_${userId}_${timestamp}.pcm`);
+    const writeStream = fs.createWriteStream(audioFilePath);
 
-  const audioStream = connection.receiver.subscribe(userId, {
-    end: {
-      behavior: EndBehaviorType.Manual,
-    },
-  });
+    const audioStream = connection.receiver.subscribe(userId, {
+      end: {
+        behavior: EndBehaviorType.Manual,
+      },
+    });
 
-  const decoder = new prism.opus.Decoder({ frameSize: 960, channels: 1, rate: 48000 });
+    const decoder = new prism.opus.Decoder({ frameSize: 960, channels: 1, rate: 48000 });
+    const volumeTransformer = new prism.VolumeTransformer({ type: 's16le' });
 
-  audioStream.pipe(decoder).pipe(writeStream);
+    let silenceTimeout;
 
-  audioStream.on('data', (chunk) => {
-    console.log(`Received audio chunk of size ${chunk.length} from user ${userId}`);
-  });
+    volumeTransformer.on('data', (chunk) => {
+      const volume = Math.sqrt(chunk.reduce((sum, val) => sum + val ** 2, 0) / chunk.length);
+      if (volume < 0.01) {
+        if (!silenceTimeout) {
+          silenceTimeout = setTimeout(() => {
+            audioStream.unpipe(volumeTransformer);
+            volumeTransformer.unpipe(writeStream);
+            writeStream.end();
+            // console.log(`Silence detected for user ${userId}, stopping recording.`);
+            startNewRecording(); // Start a new recording after silence
+          }, 250);
+        }
+      } else {
+        if (!time) {
+          time = new Date().toLocaleTimeString('en-US', { hour12: false });
+          const recordingEntry = recordingData[guildId].get(userId).find(entry => entry.audioFilePath === audioFilePath);
+          if (recordingEntry) {
+            recordingEntry.time = time; 
+          }
+        }
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout);
+          silenceTimeout = null;
+        }
+      }
+    });
 
-  audioStream.on('error', error => {
-    console.error('Audio stream error:', error);
-  });
+    audioStream.pipe(decoder).pipe(volumeTransformer).pipe(writeStream);
 
-  writeStream.on('finish', () => {
-    console.log(`Finished writing audio for user ${userId}`);
-  });
+    audioStream.on('data', (chunk) => {
+      // console.log(`Received audio chunk of size ${chunk.length} from user ${userId}`);
+    });
 
-  recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction });
-}
+    audioStream.on('error', error => {
+      // console.error('Audio stream error:', error);
+    });
 
-async function stopRecording(userId) {
-  const recordingInfo = recordingData.get(userId);
+    writeStream.on('finish', () => {
+      // console.log(`Finished writing audio for user ${userId}`);
+    });
 
-  if (recordingInfo) {
-    const { audioStream, writeStream, audioFilePath, interaction } = recordingInfo;
+    if (!recordingData[guildId]) {
+      recordingData[guildId] = new Map();
+    }
 
-    audioStream.destroy();
-    writeStream.end();
+    if (!recordingData[guildId].has(userId)) {
+      recordingData[guildId].set(userId, []);
+    }
 
-    console.log(`Recording saved to ${audioFilePath}`);
+    recordingData[guildId].get(userId).push({ connection, audioStream, writeStream, audioFilePath, interaction, timestamp, time });
+  };
 
-    recordingData.delete(userId);
-  } else {
-    console.log('No active recording found for user:', userId);
-  }
+  startNewRecording();
 }
