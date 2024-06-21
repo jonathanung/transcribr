@@ -6,6 +6,7 @@ const ffmpeg = require('fluent-ffmpeg');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { exec } = require('child_process');
 const sodium = require('libsodium-wrappers');
+const deleteDirectory = require('./utils/directories/delete-directory');
 
 (async () => {
     await sodium.ready;
@@ -79,83 +80,20 @@ client.once(Events.ClientReady, client => {
 	console.log(`${client.user.tag} is now running!`);
 });
 
-async function deleteFiles(directory) {
-    return new Promise((resolve, reject) => {
-        fs.readdir(directory, (err, files) => {
-            if (err) {
-                return reject(`Error reading directory: ${err}`);
-            }
-
-            const deletePromises = files.map(file => {
-                const filePath = path.join(directory, file);
-                return new Promise((resolve, reject) => {
-                    fs.stat(filePath, (err, stats) => {
-                        if (err) {
-                            console.error(`Error getting stats for file: ${file}, ${err}`);
-                            return reject(err);
-                        }
-
-                        if (stats.isDirectory()) {
-                            deleteFiles(filePath)
-                                .then(() => {
-                                    fs.rmdir(filePath, err => {
-                                        if (err) {
-                                            console.error(`Error deleting directory: ${file}, ${err}`);
-                                            return reject(err);
-                                        } else {
-                                            console.log(`Deleted directory: ${file}`);
-                                            resolve();
-                                        }
-                                    });
-                                })
-                                .catch(reject);
-                        } else {
-                            if (file.endsWith('.pcm') || file.endsWith('.mp3') || file.endsWith('.wav')) {
-                                fs.unlink(filePath, err => {
-                                    if (err) {
-                                        console.error(`Error deleting file: ${file}, ${err}`);
-                                        return reject(err);
-                                    } else {
-                                        console.log(`Deleted file: ${file}`);
-                                        resolve();
-                                    }
-                                });
-                            } else {
-                                resolve(); // Ignore non-audio files
-                            }
-                        }
-                    });
-                });
-            });
-
-            Promise.all(deletePromises)
-                .then(resolve)
-                .catch(reject);
-        });
-    });
-}
-
 process.on('SIGINT', async () => {
-    console.log('^C. Shutting down gracefully...');
-    
-    const recordingDir = path.join(__dirname, 'commands', 'recording');
+  console.log('^C. Shutting down gracefully...');
+  
+  const recordingDir = path.join(__dirname, 'utils', 'recording', 'audio_data');
 
-    try {
-        const subdirs = (await fs.promises.readdir(recordingDir, { withFileTypes: true }))
-            .filter(dirent => dirent.isDirectory())
-            .map(dirent => path.join(recordingDir, dirent.name));
+  try {
+    await deleteDirectory(recordingDir);
+    console.log('All files in the directory deleted successfully');
+  } catch (error) {
+    console.error('Error during directory deletion:', error);
+  }
 
-        for (const subdir of subdirs) {
-            await deleteFiles(subdir);
-        }
-
-        console.log('All files in subdirectories deleted successfully');
-    } catch (error) {
-        console.error('Error during file and directory deletion:', error);
-    }
-
-    client.destroy();
-    process.exit(0);
+  client.destroy();
+  process.exit(0);
 });
 
 client.login(TOKEN);
