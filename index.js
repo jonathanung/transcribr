@@ -3,7 +3,7 @@ const { joinVoiceChannel, getVoiceConnection, EndBehaviorType, generateDependenc
 const fs = require('fs');
 const path = require('node:path');
 const ffmpeg = require('fluent-ffmpeg');
-require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { exec } = require('child_process');
 const sodium = require('libsodium-wrappers');
 
@@ -15,7 +15,7 @@ const sodium = require('libsodium-wrappers');
 console.log(generateDependencyReport());
 
 const TOKEN = process.env.DISCORD_TOKEN;
-const DEV_MODE = process.env.DEV_MODE === 'true';
+const DEV_MODE = process.env.TR_DEV_MODE === 'true'; 
 
 const client = new Client({ 
     intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages ] 
@@ -155,8 +155,7 @@ process.on('SIGINT', async () => {
     }
 
     client.destroy();
- process.exit(0);
+    process.exit(0);
 });
-
 
 client.login(TOKEN);
