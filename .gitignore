@@ -1,5 +1,3 @@
-transcribr-env
-transcribr-env-windows
 .env
 node_modules
 guilds.json
