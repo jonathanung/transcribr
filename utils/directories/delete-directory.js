@@ -7,7 +7,7 @@ async function deleteDirectory(directory) {
       if (err) {
         return reject(`Error deleting directory: ${err}`);
       }
-      console.log(`Deleted directory: ${directory}`);
+      // console.log(`Deleted directory: ${directory}`);
       resolve();
     });
   });

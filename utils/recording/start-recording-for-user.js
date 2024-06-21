@@ -4,16 +4,16 @@ const prism = require('prism-media');
 const { EndBehaviorType } = require('@discordjs/voice');
 const recordingData = require('./recording-data');
 
-async function startRecordingForUser(userId, connection, interaction, guildId) {
+async function startRecordingForUser(userId, connection, interaction, guildId, meetingName) {
   const startNewRecording = () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    let day = null;
     let time = null;
-    const audioFolderPath = path.join(__dirname, "audio_data");
-    if (!fs.existsSync(audioFolderPath)) {
-      fs.mkdirSync(audioFolderPath);
+    let day = null;
+    const parentFolderPath = path.join(__dirname, 'audio_data');
+    if (!fs.existsSync(parentFolderPath)) {
+      fs.mkdirSync(parentFolderPath, { recursive: true });
     }
-    const guildFolderPath = path.join(audioFolderPath, guildId);
+    const guildFolderPath = path.join(parentFolderPath, guildId);
     if (!fs.existsSync(guildFolderPath)) {
       fs.mkdirSync(guildFolderPath);
     }
@@ -45,8 +45,8 @@ async function startRecordingForUser(userId, connection, interaction, guildId) {
         }
       } else {
         if (!time) {
-          day = new Date().toLocaleDateString('en-US');
           time = new Date().toLocaleTimeString('en-US', { hour12: false });
+          day = new Date().toLocaleDateString('en-US');
           const recordingEntry = recordingData[guildId].get(userId).find(entry => entry.audioFilePath === audioFilePath);
           if (recordingEntry) {
             recordingEntry.time = time; 
@@ -76,6 +76,7 @@ async function startRecordingForUser(userId, connection, interaction, guildId) {
 
     if (!recordingData[guildId]) {
       recordingData[guildId] = new Map();
+      recordingData[guildId].name = meetingName;
     }
 
     if (!recordingData[guildId].has(userId)) {

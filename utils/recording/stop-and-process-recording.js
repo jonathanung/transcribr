@@ -9,7 +9,7 @@ const openai = new OpenAI({
 });
 
 async function stopAndProcessRecording(interaction, user, recordingInfo, transcriptionResults, guildId) {
-  const { audioStream, writeStream, audioFilePath, timestamp, time } = recordingInfo;
+  const { audioStream, writeStream, audioFilePath, timestamp, time, day } = recordingInfo;
 
   audioStream.destroy();
   writeStream.end();
@@ -46,17 +46,17 @@ async function stopAndProcessRecording(interaction, user, recordingInfo, transcr
           } else if (response && response.text) {
             transcription = response.text.trim();
           } else {
-            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Unexpected response structure received for user ${user.username}.` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), day: day, time: time, transcription: `Unexpected response structure received for user ${user.username}.` });
             return resolve();
           }
 
-          transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `${user.username}: ${transcription}` });
+          transcriptionResults.push({ user: user, timestamp: new Date(timestamp), day: day, time: time, transcription: `${user.username}: ${transcription}` });
         } catch (error) {
           if (error.code === 'audio_too_short') {
-            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `No audio recorded for user ${user.username}` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), day: day, time: time, transcription: `No audio recorded for user ${user.username}` });
           } else {
             console.error('Error during transcription:', error);
-            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Error during transcription for user ${user.username}.` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), day: day, time: time, transcription: `Error during transcription for user ${user.username}.` });
           }
         }
 
@@ -70,7 +70,7 @@ async function stopAndProcessRecording(interaction, user, recordingInfo, transcr
       })
       .on('error', async (err) => {
         console.error('Error processing audio file:', err);
-        transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Error processing audio file for user ${user.username}.` });
+        transcriptionResults.push({ user: user, timestamp: new Date(timestamp), day: day, time: time, transcription: `Error processing audio file for user ${user.username}.` });
         reject(err);
       });
 
