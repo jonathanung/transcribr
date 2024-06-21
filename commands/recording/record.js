@@ -4,8 +4,6 @@ const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const recordingData = require('../../recording-data');
-const ffmpeg = require('fluent-ffmpeg');
-const { setTimeout, clearTimeout } = require('timers');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,6 +14,7 @@ module.exports = {
       return interaction.reply('You need to join a voice channel first!');
     }
 
+    const guildId = interaction.guild.id;
     const channel = interaction.member.voice.channel;
     const connection = joinVoiceChannel({
       channelId: channel.id,
@@ -24,13 +23,13 @@ module.exports = {
       selfDeaf: false,
     });
 
-    await interaction.deferReply(); // Defer the interaction response
+    await interaction.deferReply();
 
     connection.on('stateChange', async (oldState, newState) => {
-      console.log(`Voice connection state changed from ${oldState.status} to ${newState.status}`);
+      // console.log(`Voice connection state changed from ${oldState.status} to ${newState.status}`);
       if (newState.status === 'ready') {
-        startRecording(interaction, connection);
         await interaction.followUp(`Recording started in ${channel.name}.`);
+        startRecording(interaction, connection, channel, guildId);
       }
     });
 
@@ -38,15 +37,37 @@ module.exports = {
       console.error('Voice connection error:', error);
       await interaction.followUp('Failed to connect to the voice channel.');
     });
+
+    interaction.client.on('voiceStateUpdate', (oldState, newState) => {
+      if (newState.channelId === channel.id && !newState.member.user.bot) {
+        if (!recordingData[guildId]) {
+          recordingData[guildId] = new Map();
+        }
+        if (!recordingData[guildId].has(newState.id)) {
+          startRecordingForUser(newState.id, connection, interaction, guildId);
+        }
+      }
+    });
   },
 };
 
-async function startRecording(interaction, connection) {
-  const userId = interaction.user.id;
+async function startRecording(interaction, connection, channel, guildId) {
+  const members = channel.members.filter(member => !member.user.bot);
 
-  const startNewRecording = async () => {
+  members.forEach(member => {
+    startRecordingForUser(member.id, connection, interaction, guildId);
+  });
+}
+
+async function startRecordingForUser(userId, connection, interaction, guildId) {
+  const startNewRecording = () => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const audioFilePath = path.join(__dirname, `recording_${userId}_${timestamp}.pcm`);
+    let time = null;
+    const guildFolderPath = path.join(__dirname, guildId);
+    if (!fs.existsSync(guildFolderPath)) {
+      fs.mkdirSync(guildFolderPath);
+    }
+    const audioFilePath = path.join(guildFolderPath, `recording_${userId}_${timestamp}.pcm`);
     const writeStream = fs.createWriteStream(audioFilePath);
 
     const audioStream = connection.receiver.subscribe(userId, {
@@ -55,95 +76,62 @@ async function startRecording(interaction, connection) {
       },
     });
 
-    const decoder = new prism.opus.Decoder({ frameSize: 480, channels: 1, rate: 48000 });
+    const decoder = new prism.opus.Decoder({ frameSize: 960, channels: 1, rate: 48000 });
+    const volumeTransformer = new prism.VolumeTransformer({ type: 's16le' });
 
-    audioStream.pipe(decoder).pipe(writeStream);
+    let silenceTimeout;
+
+    volumeTransformer.on('data', (chunk) => {
+      const volume = Math.sqrt(chunk.reduce((sum, val) => sum + val ** 2, 0) / chunk.length);
+      if (volume < 0.01) {
+        if (!silenceTimeout) {
+          silenceTimeout = setTimeout(() => {
+            audioStream.unpipe(volumeTransformer);
+            volumeTransformer.unpipe(writeStream);
+            writeStream.end();
+            // console.log(`Silence detected for user ${userId}, stopping recording.`);
+            startNewRecording(); // Start a new recording after silence
+          }, 250);
+        }
+      } else {
+        if (!time) {
+          time = new Date().toLocaleTimeString('en-US', { hour12: false });
+          const recordingEntry = recordingData[guildId].get(userId).find(entry => entry.audioFilePath === audioFilePath);
+          if (recordingEntry) {
+            recordingEntry.time = time; 
+          }
+        }
+        if (silenceTimeout) {
+          clearTimeout(silenceTimeout);
+          silenceTimeout = null;
+        }
+      }
+    });
+
+    audioStream.pipe(decoder).pipe(volumeTransformer).pipe(writeStream);
 
     audioStream.on('data', (chunk) => {
-      console.log(`Received audio chunk of size ${chunk.length}`);
+      // console.log(`Received audio chunk of size ${chunk.length} from user ${userId}`);
     });
 
     audioStream.on('error', error => {
-      console.error('Audio stream error:', error);
+      // console.error('Audio stream error:', error);
     });
 
-    recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction });
+    writeStream.on('finish', () => {
+      // console.log(`Finished writing audio for user ${userId}`);
+    });
 
-    // Schedule the next recording
-    const timer = setTimeout(() => stopRecording(userId, true), 30000);
-    recordingData.set(userId, { connection, audioStream, writeStream, audioFilePath, interaction, timer });
+    if (!recordingData[guildId]) {
+      recordingData[guildId] = new Map();
+    }
+
+    if (!recordingData[guildId].has(userId)) {
+      recordingData[guildId].set(userId, []);
+    }
+
+    recordingData[guildId].get(userId).push({ connection, audioStream, writeStream, audioFilePath, interaction, timestamp, time });
   };
 
-  await startNewRecording();
-}
-
-async function stopRecording(userId, startNew) {
-  const recordingInfo = recordingData.get(userId);
-
-  if (recordingInfo) {
-    const { audioStream, writeStream, audioFilePath, timer, interaction } = recordingInfo;
-
-    clearTimeout(timer);
-    audioStream.destroy();
-    writeStream.end();
-
-    console.log(`Recording saved to ${audioFilePath}`);
-
-    const outputWavPath = path.join(__dirname, `recording_${userId}_${new Date().toISOString().replace(/[:.]/g, '-')}.wav`);
-    
-    console.log('Starting audio processing with ffmpeg');
-    ffmpeg(audioFilePath)
-      .inputFormat('s16le')
-      .audioChannels(2)
-      .audioFrequency(48000)
-      .audioFilters('volume=1')
-      .save(outputWavPath)
-      .on('end', async () => {
-        console.log('Audio file converted to WAV');
-        const audioFile = fs.createReadStream(outputWavPath);
-
-        // Transcription logic here
-        try {
-          console.log('Starting transcription with OpenAI');
-          const response = await openai.audio.transcriptions.create({
-            file: audioFile,
-            model: 'whisper-1',
-            prompt: '',
-            response_format: 'text',
-            language: 'en',
-          });
-
-          console.log('Transcription response:', response);
-
-          if (response) {
-            const transcription = response.trim();
-            await interaction.followUp(`Transcription: ${transcription}`);
-            console.log('Transcription completed');
-          } else {
-            console.error('Unexpected response structure:', response);
-            await interaction.followUp('Unexpected response structure received.');
-          }
-        } catch (error) {
-          console.error('Error during transcription:', error);
-          await interaction.followUp('Error during transcription.');
-        }
-
-        // Clean up the PCM and WAV files after transcription
-        fs.unlinkSync(audioFilePath);
-        fs.unlinkSync(outputWavPath);
-      })
-      .on('error', async (err) => {
-        console.error('Error processing audio file:', err);
-        await interaction.followUp('Error processing audio file.');
-      });
-
-    recordingData.delete(userId);
-
-    if (startNew) {
-      // Start a new recording
-      startRecording(interaction, recordingInfo.connection);
-    }
-  } else {
-    console.log('No active recording found for user:', userId);
-  }
+  startNewRecording();
 }

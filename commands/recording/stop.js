@@ -14,90 +14,136 @@ module.exports = {
     .setName('stop')
     .setDescription('Stops the recording.'),
   async execute(interaction) {
+    const guildId = interaction.guild.id;
     try {
-      const recordingInfo = recordingData.get(interaction.user.id);
-
-      if (!recordingInfo) {
-        return interaction.reply('No active recording found for you.');
+      if (!recordingData[guildId] || recordingData[guildId].size === 0) {
+        return interaction.reply('No active recordings found.');
       }
 
-      await interaction.deferReply(); // Defer the reply to give more time for processing
+      await interaction.deferReply();
+      const promises = [];
+      const transcriptionResults = [];
 
-      const { connection, audioStream, writeStream, audioFilePath } = recordingInfo;
-
-      audioStream.destroy();
-      writeStream.end();
-
-      console.log(`Recording saved to ${audioFilePath}`);
-
-      const outputWavPath = path.join(__dirname, 'recording.wav');
-      const outputMp3Path = path.join(__dirname, 'recording.mp3');
-
-      console.log('Starting audio processing with ffmpeg');
-      ffmpeg(audioFilePath)
-        .inputFormat('s16le')
-        .audioChannels(1) // Ensure mono channel
-        .audioFrequency(48000)
-        .audioFilters('volume=1') // Apply normalization
-        .save(outputWavPath)
-        .on('end', async () => {
-          console.log('Audio file converted to WAV');
-          const audioFile = fs.createReadStream(outputWavPath);
-
-          // Convert WAV to MP3 for easy listening
-          ffmpeg(outputWavPath)
-            .audioCodec('libmp3lame')
-            .save(outputMp3Path)
-            .on('end', async () => {
-              console.log('Audio file converted to MP3');
-              await interaction.followUp(`The audio file is saved as recording.mp3. You can listen to it to check the recorded audio.`);
-
-              // Clean up the WAV file after MP3 conversion
-              fs.unlinkSync(outputWavPath);
-            })
-            .on('error', (err) => {
-              console.error('Error converting audio file to MP3:', err);
-              interaction.followUp('Error converting audio file to MP3.');
-            });
-
-          try {
-            console.log('Starting transcription with OpenAI');
-            const response = await openai.audio.transcriptions.create({
-              file: audioFile,
-              model: 'whisper-1', // OpenAI's Whisper model for transcription
-              prompt: '',
-              response_format: 'text',
-              language: 'en',
-            });
-
-            console.log('Transcription response:', response); // Log the entire response
-
-            if (response) {
-              const transcription = response.trim();
-              await interaction.followUp(`Transcription: ${transcription}`);
-              console.log('Transcription completed');
-            } else {
-              console.error('Unexpected response structure:', response);
-              await interaction.followUp('Unexpected response structure received.');
-            }
-          } catch (error) {
-            console.error('Error during transcription:', error);
-            await interaction.followUp('Error during transcription.');
-          }
-
-          // Clean up the PCM file after transcription
-          fs.unlinkSync(audioFilePath);
-        })
-        .on('error', async (err) => {
-          console.error('Error processing audio file:', err);
-          await interaction.followUp('Error processing audio file.');
+      let connection;
+      recordingData[guildId].forEach((recordings, userId) => {
+        const user = interaction.guild.members.cache.get(userId)?.user;
+        if (!connection && recordings.length > 0) {
+          connection = recordings[0].connection;
+        }
+        recordings.forEach(recordingInfo => {
+          promises.push(stopAndProcessRecording(interaction, user, recordingInfo, transcriptionResults, guildId));
         });
+      });
 
-      connection.disconnect();
-      recordingData.delete(interaction.user.id);
+      await Promise.all(promises);
+
+      const validTranscriptions = transcriptionResults
+        .filter(result => !result.transcription.includes('Unexpected response structure received for user') &&
+          !result.transcription.includes('No audio recorded for user') &&
+          !result.transcription.includes('Error during transcription for user') &&
+          !result.transcription.includes('Error processing audio file for user') &&
+          result.time !== null)
+        .sort((a, b) => a.time.localeCompare(b.time));
+      
+      const mergedTranscriptions = [];
+      validTranscriptions.forEach(result => {
+        const match = result.transcription.match(/(?:user )?(\w+):/);
+        if (match) {
+          const user = match[1];
+          const transcriptionText = result.transcription.split(`${user}: `)[1];
+          if (mergedTranscriptions.length > 0 && mergedTranscriptions[mergedTranscriptions.length - 1].user === user) {
+            mergedTranscriptions[mergedTranscriptions.length - 1].transcription += ` ${transcriptionText}`;
+          } else {
+            mergedTranscriptions.push({ user, transcription: transcriptionText, time: result.time });
+          }
+        }
+      });
+
+      const finalMessage = mergedTranscriptions.length > 0 
+        ? mergedTranscriptions.map(result => result.time + " " + result.user + ":" + result.transcription).join('\n') 
+        : 'No transcriptions were successful.';
+
+      await interaction.followUp(finalMessage);
+
+      if (connection) {
+        connection.disconnect();
+      }
     } catch (error) {
       console.error('Error executing stop command:', error);
       await interaction.followUp('There was an error while executing this command!');
+    } finally {
+      // Clear recording data for the guild
+      delete recordingData[guildId];
     }
   },
 };
+
+async function stopAndProcessRecording(interaction, user, recordingInfo, transcriptionResults, guildId) {
+  const { audioStream, writeStream, audioFilePath, timestamp, time } = recordingInfo;
+
+  audioStream.destroy();
+  writeStream.end();
+
+  // console.log(`Recording saved to ${audioFilePath}`);
+
+  const outputWavPath = path.join(__dirname, guildId, `recording_${user.id}_${timestamp}.wav`);
+
+  return new Promise((resolve, reject) => {
+    // console.log('Starting audio processing with ffmpeg');
+    ffmpeg(audioFilePath)
+      .inputFormat('s16le')
+      .audioChannels(1)
+      .audioFrequency(48000)
+      .audioFilters('volume=1')
+      .save(outputWavPath)
+      .on('end', async () => {
+        // console.log('Audio file converted to WAV:', outputWavPath);
+        const audioFile = fs.createReadStream(outputWavPath);
+
+        try {
+          // console.log('Starting transcription with OpenAI');
+          const response = await openai.audio.transcriptions.create({
+            file: audioFile,
+            model: 'whisper-1',
+            prompt: '',
+            response_format: 'text',
+            language: 'en',
+          });
+
+          let transcription;
+          if (typeof response === 'string') {
+            transcription = response.trim();
+          } else if (response && response.text) {
+            transcription = response.text.trim();
+          } else {
+            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Unexpected response structure received for user ${user.username}.` });
+            return resolve();
+          }
+
+          transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `${user.username}: ${transcription}` });
+        } catch (error) {
+          if (error.code === 'audio_too_short') {
+            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `No audio recorded for user ${user.username}` });
+          } else {
+            console.error('Error during transcription:', error);
+            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Error during transcription for user ${user.username}.` });
+          }
+        }
+
+        if (fs.existsSync(outputWavPath)) {
+          fs.unlinkSync(outputWavPath);
+        }
+        if (fs.existsSync(audioFilePath)) {
+          fs.unlinkSync(audioFilePath);
+        }
+        resolve();
+      })
+      .on('error', async (err) => {
+        console.error('Error processing audio file:', err);
+        transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Error processing audio file for user ${user.username}.` });
+        reject(err);
+      });
+
+    recordingData[guildId].delete(user.id);
+  });
+}
