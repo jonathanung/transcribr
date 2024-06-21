@@ -3,6 +3,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const { OpenAI } = require('openai');
 const recordingData = require('./recording-data');
+require('dotenv').config({ path: path.resolve(__dirname, "..", "..", '.env') });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,

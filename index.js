@@ -1,10 +1,9 @@
-const { Client, Events, GatewayIntentBits, SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection, EndBehaviorType, generateDependencyReport } = require('@discordjs/voice');
+const { Client, Events, GatewayIntentBits} = require('discord.js');
+const { generateDependencyReport } = require('@discordjs/voice');
 const fs = require('fs');
 const path = require('node:path');
-const ffmpeg = require('fluent-ffmpeg');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
-const { exec } = require('child_process');
+const commandRefresh = require('./utils/refresh/command-refresh');
 const sodium = require('libsodium-wrappers');
 const deleteDirectory = require('./utils/directories/delete-directory');
 
@@ -63,17 +62,12 @@ client.on(Events.InteractionCreate, async interaction => {
 client.once(Events.ClientReady, client => {
     if (DEV_MODE) {
         console.log('Running in development mode, refreshing commands...');
-        exec('./refresh.sh', (error, stdout, stderr) => {
-            if (error) {
-                console.error(`Error executing script: ${error}`);
-                return;
-            }
-            if (stderr) {
-                console.error(`Error output: ${stderr}`);
-                return;
-            }
-            console.log(`Script output: ${stdout}`);
-        });
+        try {
+            commandRefresh();
+        }
+        catch (error) {
+            console.error('Error refreshing commands:', error);
+        }
     } else {
         console.log('Production mode');
     }
