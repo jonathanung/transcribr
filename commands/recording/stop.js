@@ -47,6 +47,8 @@ module.exports = {
       
       const mergedTranscriptions = [];
       validTranscriptions.forEach(result => {
+        const member = interaction.guild.members.cache.get(result.user.id);
+        const nickname = member ? (member.nickname || member.user.username) : null;
         const match = result.transcription.match(/(?:user )?(\w+):/);
         if (match) {
           const user = match[1];
@@ -54,13 +56,13 @@ module.exports = {
           if (mergedTranscriptions.length > 0 && mergedTranscriptions[mergedTranscriptions.length - 1].user === user) {
             mergedTranscriptions[mergedTranscriptions.length - 1].transcription += ` ${transcriptionText}`;
           } else {
-            mergedTranscriptions.push({ user, transcription: transcriptionText, time: result.time });
+            mergedTranscriptions.push({nickname: nickname, user, transcription: transcriptionText, time: result.time });
           }
         }
       });
 
       const finalMessage = mergedTranscriptions.length > 0 
-        ? mergedTranscriptions.map(result => result.time + " " + result.user + ":" + result.transcription).join('\n') 
+        ? mergedTranscriptions.map(result => "*[" + result.time + "]* **" + result.nickname + "**:" + result.transcription).join('\n') 
         : 'No transcriptions were successful.';
 
       await interaction.followUp(finalMessage);
@@ -72,7 +74,6 @@ module.exports = {
       console.error('Error executing stop command:', error);
       await interaction.followUp('There was an error while executing this command!');
     } finally {
-      // Clear recording data for the guild
       delete recordingData[guildId];
     }
   },
@@ -116,17 +117,17 @@ async function stopAndProcessRecording(interaction, user, recordingInfo, transcr
           } else if (response && response.text) {
             transcription = response.text.trim();
           } else {
-            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Unexpected response structure received for user ${user.username}.` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Unexpected response structure received for user ${user.username}.` });
             return resolve();
           }
 
-          transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `${user.username}: ${transcription}` });
+          transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `${user.username}: ${transcription}` });
         } catch (error) {
           if (error.code === 'audio_too_short') {
-            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `No audio recorded for user ${user.username}` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `No audio recorded for user ${user.username}` });
           } else {
             console.error('Error during transcription:', error);
-            transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Error during transcription for user ${user.username}.` });
+            transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Error during transcription for user ${user.username}.` });
           }
         }
 
@@ -140,7 +141,7 @@ async function stopAndProcessRecording(interaction, user, recordingInfo, transcr
       })
       .on('error', async (err) => {
         console.error('Error processing audio file:', err);
-        transcriptionResults.push({ timestamp: new Date(timestamp), time: time, transcription: `Error processing audio file for user ${user.username}.` });
+        transcriptionResults.push({ user: user, timestamp: new Date(timestamp), time: time, transcription: `Error processing audio file for user ${user.username}.` });
         reject(err);
       });
 
