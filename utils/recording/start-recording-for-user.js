@@ -15,7 +15,7 @@ async function startRecordingForUser(userId, connection, interaction, guildId, m
     }
     const guildFolderPath = path.join(parentFolderPath, guildId);
     if (!fs.existsSync(guildFolderPath)) {
-      fs.mkdirSync(guildFolderPath);
+      fs.mkdirSync(guildFolderPath, { recursive: true });
     }
     const audioFilePath = path.join(guildFolderPath, `recording_${userId}_${timestamp}.pcm`);
     const writeStream = fs.createWriteStream(audioFilePath);

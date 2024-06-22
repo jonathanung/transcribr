@@ -77,10 +77,12 @@ client.once(Events.ClientReady, client => {
 process.on('SIGINT', async () => {
   console.log('^C. Shutting down gracefully...');
   
-  const recordingDir = path.join(__dirname, 'utils', 'recording', 'audio_data');
+	const recordingDir = path.join(__dirname, 'utils', 'recording', 'audio_data');
+	const markdownDir = path.join(__dirname, 'utils', 'recording', 'markdowns');
 
   try {
     await deleteDirectory(recordingDir);
+	await deleteDirectory(markdownDir);
     console.log('All files in the directory deleted successfully');
   } catch (error) {
     console.error('Error during directory deletion:', error);

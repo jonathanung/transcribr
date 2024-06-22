@@ -2,8 +2,13 @@ const fs = require('fs');
 const ffmpeg = require('fluent-ffmpeg');
 const path = require('path');
 const { OpenAI } = require('openai');
+require('dotenv').config({ path: path.resolve(__dirname, "..", "..", '.env') });
 const recordingData = require('./recording-data');
 const stopAndProcessRecording = require('./stop-and-process-recording');
+const summarizeMeeting = require('../gpt/summarize');
+const createMarkdownFile = require('../gpt/create-markdown');
+const { create } = require('domain');
+const { AttachmentBuilder } = require('discord.js');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -60,13 +65,16 @@ async function stopRecording(interaction, guildId) {
       }
     });
     let finalMessage = recordingData[guildId].name
-        ? `Transcription for meeting **${recordingData[guildId].name}**:\n`
-        : 'Transcription:\n';
-    finalMessage += mergedTranscriptions.length > 0 
-      ? mergedTranscriptions.map(result => "*[" + result.day + ", "+ result.time + "]* **" + result.nickname + "**:" + result.transcription).join('\n') 
-      : 'No transcriptions were successful.';
+        ? `# Transcription for meeting **${recordingData[guildId].name}**:\n`
+        : '# Transcription:\n';
+    finalMessage += mergedTranscriptions.length > 0
+      ? mergedTranscriptions.map(result => "*[" + result.day + ", "+ result.time + "]* **" + result.nickname + "**:" + result.transcription).join('\n')
+        : 'No transcriptions were successful.';
 
-      await interaction.followUp(finalMessage);
+      const summary = await summarizeMeeting(finalMessage);
+      finalMessage += '\n\n' + summary;
+      const mdPath = await createMarkdownFile(finalMessage, guildId, recordingData[guildId].name);
+      await interaction.followUp({ content: 'Here is the meeting minutes:', files: [new AttachmentBuilder(fs.readFileSync(mdPath), {name : `${recordingData[guildId].name ? recordingData[guildId].name : guildId}.md`})] });
       
   } catch (error) {
     console.error('Error executing stop command:', error);
